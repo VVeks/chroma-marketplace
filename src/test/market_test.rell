@@ -1,0 +1,751 @@
+@test module;
+import ^^.main;
+
+function test_register_user(){    
+    assert_equals(main.user@?{}, null);
+    rell.test.tx().op(main.init(rell.test.pubkeys.alice, 2, 1, "http://test/", 1)).sign(rell.test.keypairs.alice).run(); 
+    rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run(); //register user 
+    assert_equals(main.user@*{}(.username).size(), 1);
+    assert_equals(main.user@{.pubkey == rell.test.pubkeys.alice}(.username),"alice");
+    assert_equals(main.balance@{.user == main.user@{.pubkey == rell.test.pubkeys.alice}}(.amount),1);
+}
+
+function test_mint_nft() {   
+// initial state
+  val token_id = 123;
+  val total_supply = 2;
+  val mint_price = 1;
+  var base_uri = "http://test/";
+  val init_amount = 100;
+    
+  assert_equals(main.nft@?{}, null);
+  rell.test.tx().op(main.init(rell.test.pubkeys.alice, total_supply, mint_price, base_uri, init_amount)).sign(rell.test.keypairs.alice).run(); 
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run(); //register user
+  // Mint an NFT
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run();
+  val nft = main.get_nft(token_id);
+  val alice = main.user @ {rell.test.pubkeys.alice};
+  val alice_balance = main.balance @ {alice};
+  // Assert
+  assert_equals(nft[0].id, 123);
+  assert_equals(nft[0].owner, "alice");
+  assert_equals(alice_balance.amount, 99);
+}
+
+//sign the transaction with another user pubkey - must fail
+function test_mint_nft_wrong_signer() {   
+  val token_id = 123;
+    // Assert initial state
+  assert_equals(main.nft@?{}, null);
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run(); //register user
+  val ret = rell.test.tx().op(main.mint_nft(rell.test.pubkeys.bob, token_id)).sign(rell.test.keypairs.alice).run_must_fail();
+  assert_true(ret.message.contains("wrong signer"));
+}
+
+//try minting an already minted ID - must fail
+function test_mint_nft_already_minted() {   
+  val token_id = 123;
+    // Assert initial state
+  assert_equals(main.nft@?{}, null);
+  
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run(); //register user
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run(); //register user
+  
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run();
+  val ret = rell.test.tx().op(main.mint_nft(rell.test.pubkeys.bob, token_id)).sign(rell.test.keypairs.bob).run_must_fail();
+  assert_true(ret.message.contains("already minted"));
+}
+
+//try minting after total supply exceeded - must fail
+function test_mint_nft_total_supply() {   
+    // Assert initial state
+  assert_equals(main.nft@?{}, null);
+  rell.test.tx().op(main.init(rell.test.pubkeys.alice, 2, 1, "http://test/", 5)).sign(rell.test.keypairs.alice).run(); 
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run(); //register user
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run(); //register user
+  
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.bob, 2)).sign(rell.test.keypairs.bob).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.bob, 3)).sign(rell.test.keypairs.bob).run_must_fail();
+}
+
+//try minting with insufficient balance -  must fail
+function test_mint_nft_insufficient_balance() {   
+    // Assert initial state
+  assert_equals(main.nft@?{}, null);
+  rell.test.tx().op(main.init(rell.test.pubkeys.alice, 2, 3, "http://test/", 5)).sign(rell.test.keypairs.alice).run();   
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run();     
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.bob, 2)).sign(rell.test.keypairs.bob).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.bob, 3)).sign(rell.test.keypairs.bob).run_must_fail();
+}
+
+function test_list_nft() {
+  
+  val tokenID = 123;
+  val listingPrice = 10;
+
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+
+  // Mint an NFT
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, tokenID)).sign(rell.test.keypairs.alice).run();
+  
+  assert_equals(main.listing@?{}, null);
+  // List the minted NFT
+  rell.test.tx().op(main.list_nft(rell.test.pubkeys.alice, tokenID, listingPrice)).sign(rell.test.keypairs.alice).run();
+
+  // Assert
+  assert_not_equals(main.listing@?{}, null);
+  assert_equals(main.listing@{.nft.token_id == tokenID}.price, listingPrice);
+  assert_equals(main.nft@{.token_id == tokenID}.listed, true);
+}
+
+//try listing an nft belonging to another user - must fail
+function test_list_nft_wrong_owner() {  
+  val tokenID = 123;
+  val listingPrice = 10;
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run();   
+  // Mint an NFT
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.bob, tokenID)).sign(rell.test.keypairs.bob).run();  
+  rell.test.tx().op(main.list_nft(rell.test.pubkeys.alice, tokenID, listingPrice)).sign(rell.test.keypairs.alice).run_must_fail();
+}
+
+//try listing a token wich hasn't been minted - must fail
+function test_list_nft_non_existant() {  
+  val tokenID = 123;
+  val listingPrice = 10;
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.list_nft(rell.test.pubkeys.alice, tokenID, listingPrice)).sign(rell.test.keypairs.alice).run_must_fail();
+}
+
+function test_list_nft_wrong_signer() {  
+  val tokenID = 123;
+  val listingPrice = 10;
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run();   
+  // Mint an NFT
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.bob, tokenID)).sign(rell.test.keypairs.bob).run();  
+  rell.test.tx().op(main.list_nft(rell.test.pubkeys.bob, tokenID, listingPrice)).sign(rell.test.keypairs.alice).run_must_fail();
+}
+
+function test_delist_nft() {  
+  val tokenID = 123;
+  val listingPrice = 10;
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run(); 
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, tokenID)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.list_nft(rell.test.pubkeys.alice, tokenID, listingPrice)).sign(rell.test.keypairs.alice).run();
+  assert_not_equals(main.listing@?{}, null);
+  assert_equals(main.listing@{.nft.token_id == tokenID}.price, listingPrice);
+  rell.test.tx().op(main.delist_nft(rell.test.pubkeys.alice, tokenID)).sign(rell.test.keypairs.alice).run();
+  assert_equals(main.listing@?{}, null);
+}
+
+function test_delist_nft_wrong_signer() {  
+  val tokenID = 123;
+  val listingPrice = 10;
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, tokenID)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.list_nft(rell.test.pubkeys.alice, tokenID, listingPrice)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run();   
+  //try to delist as bob
+  rell.test.tx().op(main.delist_nft(rell.test.pubkeys.alice, tokenID)).sign(rell.test.keypairs.bob).run_must_fail();
+}
+
+function test_delist_nft_wrong_owner() {  
+  val tokenID = 123;
+  val listingPrice = 10;
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, tokenID)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.list_nft(rell.test.pubkeys.alice, tokenID, listingPrice)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run();   
+  //try to delist as bob
+  rell.test.tx().op(main.delist_nft(rell.test.pubkeys.bob, tokenID)).sign(rell.test.keypairs.bob).run_must_fail();
+}
+
+//create a test collection after minting tokens - additionally, test the get_collections query 
+function test_create_collection() {  
+  val collection_name = "MyCollection";
+  val token_ids = [123, 456, 789];
+
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+
+  // Mint NFTs
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 123)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 456)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 789)).sign(rell.test.keypairs.alice).run();
+
+  // Act
+  assert_equals(main.collection@?{}, null);
+  rell.test.tx().op(main.create_collection(rell.test.pubkeys.alice, collection_name, token_ids)).sign(rell.test.keypairs.alice).run();
+
+  val alice = main.user @ {rell.test.pubkeys.alice};
+  val colleciton = main.collection @ {alice, collection_name};
+  // val colleciton = main.collection @ {alice, "test"};
+
+  // Assert
+  assert_not_equals(main.collection @? {}, null);
+  assert_equals(main.collection_entry @* {colleciton}(id=collection_entry.nft.token_id).size(), token_ids.size());
+  for (token_id in token_ids) {
+    val temp_nft = main.nft @ {token_id};
+    assert_equals(main.collection_entry@{temp_nft}(collection_entry.nft.token_id), token_id);
+  }
+
+  val test = main.get_collections(rell.test.pubkeys.alice);
+  assert_equals(test[0].nfts, token_ids); //test query  
+  // print("$$$$$$$$$$$$$$$$$$$$$$$$$$");
+  // print(test);
+  // print("$$$$$$$$$$$$$$$$$$$$$$$$$$");
+
+}
+
+function test_create_collection_wrong_signer() {  
+  val collection_name = "MyCollection";
+  val token_ids = [123, 456, 789];
+
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+
+  // Mint NFTs
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 123)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 456)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 789)).sign(rell.test.keypairs.alice).run();
+
+  // Act
+  assert_equals(main.collection@?{}, null);
+  rell.test.tx().op(main.create_collection(rell.test.pubkeys.alice, collection_name, token_ids)).sign(rell.test.keypairs.bob).run_must_fail();
+}
+
+function test_create_collection_wrong_nft_owner() {  
+  val collection_name = "MyCollection";
+  val token_ids = [123, 456, 789];
+
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run();
+
+  // Mint NFTs
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 123)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 456)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.bob, 789)).sign(rell.test.keypairs.bob).run();
+
+  // Act
+  assert_equals(main.collection@?{}, null);
+  rell.test.tx().op(main.create_collection(rell.test.pubkeys.alice, collection_name, token_ids)).sign(rell.test.keypairs.alice).run_must_fail();
+}
+
+function test_create_collection_non_existant_nft() {  
+  val collection_name = "MyCollection";
+  val token_ids = [123, 456, 789];
+
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  
+  // Mint NFTs
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 123)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 456)).sign(rell.test.keypairs.alice).run();
+
+  // Act
+  assert_equals(main.collection@?{}, null);
+  rell.test.tx().op(main.create_collection(rell.test.pubkeys.alice, collection_name, token_ids)).sign(rell.test.keypairs.alice).run_must_fail();
+}
+
+
+function test_buy_nft() {
+  val token_id = 123;
+  val listingPrice = 10;
+   
+  val total_supply = 2;
+  val mint_price = 1;
+  var base_uri = "http://test/";
+  val init_amount = 100;
+    
+
+  // Execute the register function for seller and buyer
+  rell.test.tx().op(main.init(rell.test.pubkeys.alice, total_supply, mint_price, base_uri, init_amount)).sign(rell.test.keypairs.alice).run(); 
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run();
+
+  // Mint an NFT and list it for sale
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.list_nft(rell.test.pubkeys.alice, token_id, listingPrice)).sign(rell.test.keypairs.alice).run();
+
+  assert_not_equals(main.listing@?{}, null);
+  
+  rell.test.tx().op(main.buy_nft(rell.test.pubkeys.bob, token_id)).sign(rell.test.keypairs.bob).run();
+
+  val alice = main.user @ {rell.test.pubkeys.alice};
+  val bob = main.user @ {rell.test.pubkeys.bob};
+  val nft = main.nft @ {token_id};
+
+  // Assert
+  assert_equals(main.listing@?{}, null);
+  assert_equals(nft.listed, false);
+  assert_equals(nft.owner, bob);
+  assert_equals(main.balance@{.user == bob}.amount, init_amount - listingPrice);
+  assert_equals(main.balance@{.user == alice}.amount, init_amount + listingPrice - mint_price);
+  
+}
+
+function test_buy_nft_wrong_signer() {
+  val token_id = 123;
+  val listingPrice = 10;   
+  // Execute the register function for seller and buyer
+  
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run();
+
+  // Mint an NFT and list it for sale
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.list_nft(rell.test.pubkeys.alice, token_id, listingPrice)).sign(rell.test.keypairs.alice).run();
+  
+  rell.test.tx().op(main.buy_nft(rell.test.pubkeys.bob, token_id)).sign(rell.test.keypairs.alice).run_must_fail();
+  
+}
+
+//test buying an nft where buyer ==  seller - must fail
+function test_buy_nft_from_yourself() {
+  val token_id = 123;
+  val listingPrice = 10;   
+  // Execute the register function for seller and buyer
+  
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run();
+
+  // Mint an NFT and list it for sale
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.list_nft(rell.test.pubkeys.alice, token_id, listingPrice)).sign(rell.test.keypairs.alice).run();
+  
+  rell.test.tx().op(main.buy_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run_must_fail();
+  
+}
+
+//try buying an nft with insufficient balance - must fail
+function test_buy_nft_insufficient_balance() {
+  val token_id = 123;
+  val listingPrice = 10;   
+  val total_supply = 2;
+  val mint_price = 1;
+  var base_uri = "http://test/";
+  val init_amount = 9;    
+
+  // Execute the register function for seller and buyer
+  rell.test.tx().op(main.init(rell.test.pubkeys.alice, total_supply, mint_price, base_uri, init_amount)).sign(rell.test.keypairs.alice).run(); 
+  
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run();
+
+  // Mint an NFT and list it for sale
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.list_nft(rell.test.pubkeys.alice, token_id, listingPrice)).sign(rell.test.keypairs.alice).run();
+  
+  rell.test.tx().op(main.buy_nft(rell.test.pubkeys.bob, token_id)).sign(rell.test.keypairs.bob).run_must_fail();
+  
+}
+
+function test_buy_nft_nonexistant_nft() {
+  val token_id = 123;
+  val listingPrice = 10;   
+  
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run();
+
+  // Mint an NFT and list it for sale
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.list_nft(rell.test.pubkeys.alice, token_id, listingPrice)).sign(rell.test.keypairs.alice).run();
+  
+  rell.test.tx().op(main.buy_nft(rell.test.pubkeys.bob, 3)).sign(rell.test.keypairs.bob).run_must_fail();
+  
+}
+
+function test_buy_nft_unlisted_nft() {
+  val token_id = 123;
+  val listingPrice = 10;   
+  
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run();
+
+  // Mint an NFT and list it for sale
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run();    
+  rell.test.tx().op(main.buy_nft(rell.test.pubkeys.bob, token_id)).sign(rell.test.keypairs.bob).run_must_fail();
+  
+}
+
+//add a single nft to favorites
+function test_add_to_favorites_one_nft() {
+  val token_id = 123;
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  // Mint an NFT
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run();
+
+  assert_equals(main.favorite_entry@?{}, null);
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run();
+
+  val alice = main.user @ {rell.test.pubkeys.alice};
+  val alice_favorites = main.favorites @ {alice};
+  assert_not_equals(main.favorite_entry@?{}, null);
+  val alice_entry = main.favorite_entry @ {alice_favorites};
+  // Assert
+  assert_equals(alice_entry.nft.token_id, token_id);
+}
+
+//add multiple nfts to favorites - preserve order
+function test_add_to_favorites_multiple_nfts() {
+  
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  // Mint an NFT
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 3)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run();
+
+  assert_equals(main.favorite_entry@?{}, null);
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 3)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run();
+  
+  val alice = main.user @ {rell.test.pubkeys.alice};
+  val alice_favorites = main.favorites @ {alice};
+  assert_not_equals(main.favorite_entry@*{}(favorite_entry.nft).size(), 0);
+  val alice_entries = main.favorite_entry @* {alice_favorites}(favorite_entry.nft.token_id);
+  // Assert  
+  assert_equals(alice_entries, [1,3,2,4]);  
+}
+
+//try adding an nft to favorites which is already in favorites
+function test_add_to_favorites_duplicate_nfts() {
+  
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  // Mint an NFT
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 3)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run();
+
+  assert_equals(main.favorite_entry@?{}, null);
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 3)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run_must_fail();
+
+}
+
+//try adding another user's nft to favorites - must fail
+function test_add_to_favorites_other_users_nft() {
+  
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run();
+  // Mint an NFT
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 3)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.bob, 4)).sign(rell.test.keypairs.bob).run();
+
+  assert_equals(main.favorite_entry@?{}, null);
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 3)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run_must_fail();
+
+}
+
+function test_add_to_favorites_nft_wrong_signer() {
+  
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run();
+  // Mint an NFT
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 3)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run();
+
+  assert_equals(main.favorite_entry@?{}, null);
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 3)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.bob).run_must_fail();
+
+}
+
+
+function test_add_to_favorites_collection() {
+  // Arrange
+  val collectionName = "MyCollection";
+
+  // Execute the register and create_collection functions
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 123)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 456)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 789)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.create_collection(rell.test.pubkeys.alice, collectionName, [123, 456, 789])).sign(rell.test.keypairs.alice).run();
+  
+  assert_equals(main.favorite_entry@?{}, null);
+  rell.test.tx().op(main.add_to_favorites_collection(rell.test.pubkeys.alice, collectionName)).sign(rell.test.keypairs.alice).run();
+
+  val alice = main.user @ {rell.test.pubkeys.alice};
+  val alice_favorites = main.favorites @ {alice};
+  assert_not_equals(main.favorite_entry@*{}(favorite_entry.nft).size(), 0);
+  val alice_entries = main.favorite_entry @* {alice_favorites}(favorite_entry.nft.token_id);
+  
+  assert_equals(alice_entries, [123,456,789]);  
+}
+
+//add a collection to an already existing list of favorites
+function test_add_to_favorites_collection_already_existing() {
+  // Arrange
+  val collectionName = "MyCollection";
+
+  // Execute the register and create_collection functions
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 3)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 123)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 456)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 789)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.create_collection(rell.test.pubkeys.alice, collectionName, [123, 456, 789])).sign(rell.test.keypairs.alice).run();
+  
+  assert_equals(main.favorite_entry@?{}, null);
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_collection(rell.test.pubkeys.alice, collectionName)).sign(rell.test.keypairs.alice).run();
+
+  val alice = main.user @ {rell.test.pubkeys.alice};
+  val alice_favorites = main.favorites @ {alice};
+  assert_not_equals(main.favorite_entry@*{}(favorite_entry.nft).size(), 0);
+  val alice_entries = main.favorite_entry @* {alice_favorites}(favorite_entry.nft.token_id);
+  
+  assert_equals(alice_entries, [1, 2, 4, 123, 456, 789]);  
+}
+
+function test_add_to_favorites_collection_wrong_signer() {
+  // Arrange
+  val collectionName = "MyCollection";
+
+  // Execute the register and create_collection functions
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 123)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 456)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 789)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.create_collection(rell.test.pubkeys.alice, collectionName, [123, 456, 789])).sign(rell.test.keypairs.alice).run();
+  
+  assert_equals(main.favorite_entry@?{}, null);
+  
+  rell.test.tx().op(main.add_to_favorites_collection(rell.test.pubkeys.alice, collectionName)).sign(rell.test.keypairs.bob).run_must_fail();
+
+}
+
+function test_add_to_favorites_collection_other_users_collection() {
+  // Arrange
+  val collectionName = "MyCollection";
+
+  // Execute the register and create_collection functions
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run();
+
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.bob, 123)).sign(rell.test.keypairs.bob).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.bob, 456)).sign(rell.test.keypairs.bob).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.bob, 789)).sign(rell.test.keypairs.bob).run();
+  rell.test.tx().op(main.create_collection(rell.test.pubkeys.bob, collectionName, [123, 456, 789])).sign(rell.test.keypairs.bob).run();
+  
+  assert_equals(main.favorite_entry@?{}, null);
+  
+  rell.test.tx().op(main.add_to_favorites_collection(rell.test.pubkeys.alice, collectionName)).sign(rell.test.keypairs.alice).run_must_fail();
+  
+}
+
+function test_remove_from_favorites_nft() {
+  // Arrange
+  val token_id = 123;
+
+  // Execute the register and add_to_favorites_nft functions
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run();
+
+  val alice = main.user @ {rell.test.pubkeys.alice};
+  val alice_favorites = main.favorites @ {alice};
+  assert_equals(main.favorite_entry@?{alice_favorites}(favorite_entry.nft.token_id), token_id);
+  // Act
+  rell.test.tx().op(main.remove_from_favorites_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run();
+
+  // Assert
+  assert_equals(main.favorite_entry@?{alice_favorites}, null);
+}
+
+function test_remove_from_favorites_nft_wrong_signer() {
+  // Arrange
+  val token_id = 123;
+
+  // Execute the register and add_to_favorites_nft functions
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run();
+
+  val alice = main.user @ {rell.test.pubkeys.alice};
+  val alice_favorites = main.favorites @ {alice};
+  assert_equals(main.favorite_entry@?{alice_favorites}(favorite_entry.nft.token_id), token_id);
+  // Act
+  rell.test.tx().op(main.remove_from_favorites_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.bob).run_must_fail();
+}
+
+function test_remove_from_favorites_nft_non_existing_nft() {
+  // Arrange
+  val token_id = 123;
+
+  // Execute the register and add_to_favorites_nft functions
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.remove_from_favorites_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run_must_fail();
+}
+
+//try removing a token owned by another user from favorites - must fail
+function test_remove_from_favorites_nft_wrong_nft_owner() {
+  // Arrange
+  val token_id = 123;
+
+  // Execute the register and add_to_favorites_nft functions
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.register(rell.test.pubkeys.bob, "bob")).sign(rell.test.keypairs.bob).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.bob, token_id)).sign(rell.test.keypairs.bob).run();
+  rell.test.tx().op(main.remove_from_favorites_nft(rell.test.pubkeys.alice, token_id)).sign(rell.test.keypairs.alice).run_must_fail();
+}
+
+//remove nft from favorites - preserve order
+function test_remove_from_favorites_nft_multiple_init() {
+  // Arrange
+  val collectionName = "MyCollection";
+
+  // Execute the register and create_collection functions
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 3)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 123)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 456)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 789)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.create_collection(rell.test.pubkeys.alice, collectionName, [123, 456, 789])).sign(rell.test.keypairs.alice).run();
+  
+  assert_equals(main.favorite_entry@?{}, null);
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_collection(rell.test.pubkeys.alice, collectionName)).sign(rell.test.keypairs.alice).run();
+
+  rell.test.tx().op(main.remove_from_favorites_nft(rell.test.pubkeys.alice, 456)).sign(rell.test.keypairs.alice).run();
+  val alice = main.user @ {rell.test.pubkeys.alice};
+  val alice_favorites = main.favorites @ {alice};
+  assert_not_equals(main.favorite_entry@*{}(favorite_entry.nft).size(), 0);
+  val alice_entries = main.favorite_entry @* {alice_favorites}(favorite_entry.nft.token_id);
+  
+  assert_equals(alice_entries, [1, 2, 4, 123, 789]);  
+}
+
+function test_remove_from_favorites_collection() {
+  // Arrange
+  val collectionName = "MyCollection";
+
+  // Execute the register and create_collection functions
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 3)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 123)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 456)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 789)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.create_collection(rell.test.pubkeys.alice, collectionName, [123, 456, 789])).sign(rell.test.keypairs.alice).run();
+  
+  assert_equals(main.favorite_entry@?{}, null);
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_collection(rell.test.pubkeys.alice, collectionName)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run();
+
+  rell.test.tx().op(main.remove_from_favorites_collection(rell.test.pubkeys.alice, collectionName)).sign(rell.test.keypairs.alice).run();
+  val alice = main.user @ {rell.test.pubkeys.alice};
+  val alice_favorites = main.favorites @ {alice};
+  assert_not_equals(main.favorite_entry@*{}(favorite_entry.nft).size(), 0);
+  val alice_entries = main.favorite_entry @* {alice_favorites}(favorite_entry.nft.token_id);
+  
+  assert_equals(alice_entries, [1, 2, 4]);  
+}
+
+//try removing already removed nfts from collection from favorites - must fail
+function test_remove_from_favorites_collection_after_nft_removal() {
+  // Arrange
+  val collectionName = "MyCollection";
+
+  // Execute the register and create_collection functions
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 3)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 123)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 456)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 789)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.create_collection(rell.test.pubkeys.alice, collectionName, [123, 456, 789])).sign(rell.test.keypairs.alice).run();
+  
+  assert_equals(main.favorite_entry@?{}, null);
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_collection(rell.test.pubkeys.alice, collectionName)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.remove_from_favorites_nft(rell.test.pubkeys.alice, 456)).sign(rell.test.keypairs.alice).run();
+  val alice = main.user @ {rell.test.pubkeys.alice};
+  val alice_favorites = main.favorites @ {alice};
+  assert_not_equals(main.favorite_entry@*{}(favorite_entry.nft).size(), 0);
+  val alice_entries = main.favorite_entry @* {alice_favorites}(favorite_entry.nft.token_id);
+  assert_equals(alice_entries, [1, 123, 789, 2, 4]);  
+  rell.test.tx().op(main.remove_from_favorites_collection(rell.test.pubkeys.alice, collectionName)).sign(rell.test.keypairs.alice).run_must_fail();
+  
+}
+
+
+function test_add_to_favorites_after_removing() {
+  
+  // Execute the register function
+  rell.test.tx().op(main.register(rell.test.pubkeys.alice, "alice")).sign(rell.test.keypairs.alice).run();
+  // Mint an NFT
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 3)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.mint_nft(rell.test.pubkeys.alice, 5)).sign(rell.test.keypairs.alice).run();
+
+  assert_equals(main.favorite_entry@?{}, null);
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 1)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 3)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 2)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 4)).sign(rell.test.keypairs.alice).run();
+  rell.test.tx().op(main.remove_from_favorites_nft(rell.test.pubkeys.alice, 3)).sign(rell.test.keypairs.alice).run();
+  rell.test.nop(12556256);
+  rell.test.tx().op(main.add_to_favorites_nft(rell.test.pubkeys.alice, 5)).sign(rell.test.keypairs.alice).run();
+
+  val alice = main.user @ {rell.test.pubkeys.alice};
+  val alice_favorites = main.favorites @ {alice};
+  assert_not_equals(main.favorite_entry@*{}(favorite_entry.nft).size(), 0);
+  val alice_entries = main.favorite_entry @* {alice_favorites}(favorite_entry.nft.token_id);
+  print (alice_entries);
+  assert_equals(alice_entries, [1, 2, 4, 5]);  
+
+}

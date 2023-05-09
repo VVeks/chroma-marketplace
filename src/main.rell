@@ -1,0 +1,209 @@
+module;
+
+entity user { 
+  key pubkey;
+  key username: text;
+}
+
+entity nft {
+    index mutable owner: user;
+    key token_id: integer;    
+    token_URI: text;   
+    mutable listed: boolean; 
+}
+
+object init_data{
+  mutable nft_total_supply: integer = 10;
+  mutable mint_price: integer = 1;
+  mutable base_url: text = "http://examplenft.ex/";
+  mutable starting_balance: integer = 100;
+}
+
+entity balance {
+  key user;
+  mutable amount: integer;
+}
+
+entity listing {
+  key nft;
+  price: integer;
+}
+
+entity collection {
+  key user, name: text;  
+}
+
+entity collection_entry {
+  index collection;  
+  nft;  
+}
+
+struct collections_ret {
+  name: text;
+  nfts: list<integer>;
+}
+
+entity favorites {
+  key user;
+}
+
+entity favorite_entry {
+  index favorites;
+  nft;
+}
+
+//for testing purposes
+operation init(founder_pubkey: pubkey, total_supply: integer, mint_price: integer, base_url: text, starting_balance: integer){
+  require(op_context.is_signer(founder_pubkey));
+  require(founder_pubkey == x"02466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"); //only alice
+  init_data.nft_total_supply = total_supply;
+  init_data.mint_price = mint_price;
+  init_data.base_url = base_url;
+  init_data.starting_balance = starting_balance;
+}
+
+operation register(pubkey, username: text) {
+  require(op_context.is_signer(pubkey));
+  val new_user = create user (pubkey, username);
+  create balance (new_user, init_data.starting_balance); 
+  create favorites (new_user);
+}
+
+operation create_collection(pubkey, name: text, token_ids: list<integer>) {
+  require(op_context.is_signer(pubkey), "wrong signer");
+  val user = user @ { pubkey };  //require user registered
+  val new_collection = create collection (user, name);  
+  for (token_id in token_ids) {
+    val temp_nft = nft @ {token_id};
+    require (temp_nft.owner == user, "can't add another user's nft to own colleciton");
+    create collection_entry (new_collection, temp_nft);
+  }
+}
+
+operation add_to_favorites_nft(pubkey, token_id: integer) {
+  require(op_context.is_signer(pubkey), "wrong signer");
+  val user = user @ { pubkey };  //require user registered
+  val favorites = favorites @ {user};  
+  val temp_nft = nft @ {token_id};
+  require (temp_nft.owner == user, "can't add another user's nft to own favs"); //perhaps in order to buy favorited nfts, this could be removed
+  create favorite_entry (favorites, temp_nft);  
+}
+
+operation add_to_favorites_collection(pubkey, name: text) {
+  require(op_context.is_signer(pubkey), "wrong signer");
+  val user = user @ { pubkey };  //require user registered
+  val favorites = favorites @ {user};  
+  val collection = collection @ {user, name};
+  require (collection.user == user, "can't add another user's collection to own favs"); //perhaps in order to buy favorited nfts, this could be removed
+  val collection_entries_nfts = collection_entry @* {collection}(collection_entry.nft);
+  for(collection_entry in collection_entries_nfts){
+    create favorite_entry (favorites, collection_entry); 
+  }  
+}
+
+operation remove_from_favorites_nft(pubkey, token_id: integer) {
+  require(op_context.is_signer(pubkey), "wrong signer");
+  val user = user @ { pubkey };  //require user registered
+  val favorites = favorites @ {user};  
+  val temp_nft = nft @ {token_id};  
+  delete favorite_entry @ {.favorites == favorites, .nft == temp_nft};
+}
+
+operation remove_from_favorites_collection(pubkey, name: text) {
+  require(op_context.is_signer(pubkey), "wrong signer");
+  val user = user @ { pubkey };  //require user registered
+  val favorites = favorites @ {user};  
+  val collection = collection @ {user, name};  
+  val collection_entries_nfts = collection_entry @* {collection}(collection_entry.nft);
+  for(collection_entry in collection_entries_nfts){
+    delete favorite_entry @ {.favorites == favorites, .nft == collection_entry};
+  }  
+}
+
+operation mint_nft(pubkey, token_id_to_mint: integer) {
+  require(op_context.is_signer(pubkey), "wrong signer");
+  require((nft @* { token_id_to_mint } limit 1).size() == 0, "already minted");//require not minted - !!409!!
+  require((nft @* {}).size() < init_data.nft_total_supply , "total supply exceeded");//require count < total_supply
+  val minter = user @ { pubkey }; 
+  require( balance @ { minter }.amount >= init_data.mint_price, "insufficient balance");//require enough balance = require is registered  
+  update balance @ { minter } (
+        .amount -= init_data.mint_price  //substract balance
+    );
+ 
+  val new_nft = create nft (minter, token_id_to_mint, init_data.base_url + token_id_to_mint.to_text(10), false); //create nft
+}
+
+operation list_nft(pubkey, token_id_to_list: integer, listing_price: integer) {
+  require(op_context.is_signer(pubkey), "wrong signer");
+  val seller = user@{ pubkey }; 
+  val nft_for_sale = nft@{ token_id_to_list }; 
+  require( nft_for_sale.owner == seller, "nft not owned by signer"); //fail because of null above?
+  create listing ( 
+    nft = nft_for_sale,
+    price = listing_price
+  );
+
+  update nft @ {.token_id == token_id_to_list}(
+    listed = true
+  );
+}
+
+operation delist_nft(pubkey, token_id_to_list: integer) {
+  require(op_context.is_signer(pubkey), "wrong signer");
+  val seller = user @ { pubkey }; 
+  val nft_for_sale = nft @ { token_id_to_list }; 
+  val listing = listing @ { nft_for_sale }; 
+  require( nft_for_sale.owner == seller, "nft not owned by signer"); //fail because of null above?
+
+  delete listing @ {.nft == nft_for_sale } ;
+  update nft @ {.token_id == token_id_to_list}(
+    listed = false
+  );
+}
+
+operation buy_nft(pubkey, token_id_to_buy: integer) {
+  require(op_context.is_signer(pubkey), "wrong signer");
+  val buyer = user @ { pubkey }; 
+  val temp_nft = nft @ {token_id_to_buy};
+  val listing = listing @ {temp_nft}; //check if not nullable - ask how to print message - this will fail either with 409 or 400  
+  require(buyer != temp_nft.owner, "can't buy from yourself");
+  require( balance @ { buyer }.amount >= listing.price, "insufficient balance");//require enough balance
+  update balance @ {.user == buyer}  (.amount -= listing.price);
+  update balance @ {.user == temp_nft.owner}  (.amount += listing.price);  
+  
+  delete listing @ {.nft == temp_nft } ;
+
+  update nft @ {.token_id == token_id_to_buy}( 
+    listed = false, 
+    owner = buyer
+  );
+}
+
+query get_collections(pubkey) {
+  val user = user @ {pubkey};
+  val collections = collection @* { user }; 
+  var ret = list<collections_ret>();
+  for (collection in collections ) {
+    val collection_entries = collection_entry @* {collection}(collection_entry.nft.token_id);
+    val temp_collections_ret = collections_ret(name=collection.name, nfts=collection_entries);
+    ret.add(temp_collections_ret); 
+  }
+  return ret;  
+}
+
+query get_nft(token_id: integer) {
+  return nft @* {token_id}( id = nft.token_id, owner = .owner.username, url= .token_URI, listed = .listed);  
+}
+
+query get_nfts(pubkey) {
+  val user = user @ {pubkey}; 
+  return nft @* {.owner==user}( id = nft.token_id, owner = .owner.username, url= .token_URI, listed = .listed);  
+}
+
+query get_listings() {  
+  return listing @* {}( id = listing.nft.token_id, owner = listing.nft.owner.username, url= listing.nft.token_URI, listed = listing.nft.listed, price = listing.price);  
+}
+
+query get_balance(pubkey) {
+  return balance@?{ user@{ pubkey } }.amount;
+}

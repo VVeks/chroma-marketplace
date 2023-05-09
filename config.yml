@@ -1,0 +1,9 @@
+blockchains:
+  marketplace:
+    module: main
+compile:
+  rellVersion: 0.11.0
+test:
+  modules:
+    - test.market_test
+database: !include database.local.yml
